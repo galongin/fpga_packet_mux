@@ -1,0 +1,5 @@
+$ROOT_DIR/design/src/packet_mux_pkg.sv
+$ROOT_DIR/design/src/skid_buffer.sv
+$ROOT_DIR/design/src/sync_fifo.sv
+$ROOT_DIR/design/src/arbiter.sv
+$ROOT_DIR/design/src/packet_mux_top.sv
