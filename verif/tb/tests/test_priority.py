@@ -1,13 +1,12 @@
 """
 Priority and arbitration tests
-All tests comply with Ethernet packet constraints (64-1518 bytes).
+All tests comply with AV_STREAM packet constraints (46-1500 bytes, without Ethernet header).
 """
 import cocotb
-from cocotb.triggers import RisingEdge, Timer
-from drivers.avalon_st_driver import AvalonSTSource
-from monitors.avalon_st_monitor import AvalonSTSink
-from utils.test_utils import reset_dut, setup_clock, wait_cycles, create_packet
-from test_helpers.test_fixtures import create_test_environment
+from cocotb.triggers import RisingEdge
+from utils.test_utils import reset_dut, wait_cycles, create_packet
+from test_helpers.test_fixtures import create_test_environment, create_sink_with_backpressure
+from config import WAIT_SHORT_CYCLES, WAIT_MEDIUM_CYCLES
 
 
 @cocotb.test()
@@ -18,7 +17,7 @@ async def test_priority_a_over_b(dut):
     
     cocotb.start_soon(env['sink_c'].run())
     
-    # Create valid Ethernet packets (64 bytes minimum)
+    # Create valid AV_STREAM packets (46 bytes minimum)
     # Use incrementing pattern with different start values to distinguish A vs B
     pkt_a, empty_a = create_packet(64, pattern='incrementing', start_value=0xAAAA0000)
     pkt_b, empty_b = create_packet(64, pattern='incrementing', start_value=0xBBBB0000)
@@ -72,7 +71,7 @@ async def test_priority_a_over_b(dut):
         env['src_b'].empty.value = 0
     
     await send_both()
-    await wait_cycles(dut, 40)
+    await wait_cycles(dut, WAIT_SHORT_CYCLES)
     
     # A should be received first
     assert len(env['sink_c'].packets) >= 1
@@ -94,11 +93,11 @@ async def test_concurrent_packets(dut):
     await env['src_b'].send_packet(pkt_b, empty_last=empty_b)
     await wait_cycles(dut, 10)
     
-    # Send A packet (64 bytes = 8 words)
+    # Send A packet (64 bytes)
     pkt_a, empty_a = create_packet(64)
     await env['src_a'].send_packet(pkt_a, empty_last=empty_a)
     
-    await wait_cycles(dut, 60)
+    await wait_cycles(dut, WAIT_MEDIUM_CYCLES)
     
     # Both packets should be received, B first
     assert len(env['sink_c'].packets) == 2
@@ -116,7 +115,7 @@ async def test_back_to_back_packets(dut):
     
     env['src_b'].set_idle()
     
-    # Create valid Ethernet packets (64 bytes each)
+    # Create valid AV_STREAM packets (64 bytes each)
     pkt1, empty1 = create_packet(64)
     pkt2, empty2 = create_packet(64)
     pkt3, empty3 = create_packet(64)
@@ -127,7 +126,7 @@ async def test_back_to_back_packets(dut):
     await wait_cycles(dut, 5)
     await env['src_a'].send_packet(pkt3, empty_last=empty3)
     
-    await wait_cycles(dut, 60)
+    await wait_cycles(dut, WAIT_MEDIUM_CYCLES)
     
     assert len(env['sink_c'].packets) == 3
     assert env['sink_c'].packets[0] == pkt1
@@ -143,7 +142,7 @@ async def test_alternating_packets(dut):
     
     cocotb.start_soon(env['sink_c'].run())
     
-    # Create valid Ethernet packets (64 bytes each)
+    # Create valid AV_STREAM packets (64 bytes each)
     pkt_a1, empty_a1 = create_packet(64)
     pkt_b, empty_b = create_packet(64)
     pkt_a2, empty_a2 = create_packet(64)
@@ -154,7 +153,7 @@ async def test_alternating_packets(dut):
     await wait_cycles(dut, 5)
     await env['src_a'].send_packet(pkt_a2, empty_last=empty_a2)
     
-    await wait_cycles(dut, 60)
+    await wait_cycles(dut, WAIT_MEDIUM_CYCLES)
     
     assert len(env['sink_c'].packets) == 3
     assert env['sink_c'].packets[0] == pkt_a1
@@ -171,23 +170,13 @@ async def test_both_ports_waiting(dut):
     await reset_dut(dut)
     
     # Use sink with backpressure control
-    sink_c = AvalonSTSinkWithBackpressure(
-        clk   = dut.clk,
-        data  = dut.portc_data,
-        valid = dut.portc_valid,
-        sop   = dut.portc_sop,
-        eop   = dut.portc_eop,
-        empty = dut.portc_empty,
-        error = dut.portc_error,
-        ready = dut.portc_ready,
-    )
-    
+    sink_c = create_sink_with_backpressure(dut)
     cocotb.start_soon(sink_c.run())
     
     # Start with ready low
     sink_c.set_ready(False)
     
-    # Create valid Ethernet packets (64 bytes each)
+    # Create valid AV_STREAM packets (64 bytes each)
     # Use incrementing pattern with different start values to distinguish A vs B
     pkt_a, empty_a = create_packet(64, pattern='incrementing', start_value=0xAAAA0000)
     pkt_b, empty_b = create_packet(64, pattern='incrementing', start_value=0xBBBB0000)
@@ -243,7 +232,7 @@ async def test_both_ports_waiting(dut):
         env['src_b'].empty.value = 0
     
     await send_packets()
-    await wait_cycles(dut, 40)
+    await wait_cycles(dut, WAIT_SHORT_CYCLES)
     
     # A should be received first due to priority
     assert len(sink_c.packets) >= 1

@@ -1,13 +1,17 @@
 """
 Stress and concurrent tests
-All tests comply with Ethernet packet constraints (64-1518 bytes).
+All tests comply with AV_STREAM packet constraints (46-1500 bytes, without Ethernet header).
 """
 import cocotb
 from cocotb.triggers import RisingEdge
-from drivers.avalon_st_driver import AvalonSTSource
-from monitors.avalon_st_monitor import AvalonSTSink
 from utils.test_utils import reset_dut, setup_clock, wait_cycles, create_packet
-from test_helpers.test_fixtures import create_test_environment
+from test_helpers.test_fixtures import (
+    create_test_environment,
+    create_sink_with_backpressure,
+    create_queued_source_a,
+    create_queued_source_b
+)
+from config import WAIT_SHORT_CYCLES, WAIT_MEDIUM_CYCLES, WAIT_LONG_CYCLES
 
 
 @cocotb.test()
@@ -25,13 +29,13 @@ async def test_rapid_packet_sequence(dut):
     packets = []
     
     for i in range(num_packets):
-        # Create valid Ethernet packet (64 bytes minimum)
+        # Create valid AV_STREAM packet (46 bytes minimum)
         pkt, empty = create_packet(64)
         packets.append(pkt)
         await env['src_a'].send_packet(pkt, empty_last=empty)
         await wait_cycles(dut, 2)  # Small gap between packets
     
-    await wait_cycles(dut, 200)
+    await wait_cycles(dut, WAIT_LONG_CYCLES)
     
     assert len(env['sink_c'].packets) == num_packets
     for i, pkt in enumerate(packets):
@@ -51,7 +55,7 @@ async def test_both_ports_active(dut):
     packets_b = []
     
     for i in range(10):
-        # Create valid Ethernet packets (64 bytes each)
+        # Create valid AV_STREAM packets (64 bytes each)
         pkt_a, empty_a = create_packet(64, pattern='incrementing', start_value=0xA00000 + i*1000)
         pkt_b, empty_b = create_packet(64, pattern='incrementing', start_value=0xB00000 + i*1000)
         packets_a.append(pkt_a)
@@ -90,7 +94,7 @@ async def test_packet_interleaving_stress(dut):
     cocotb.start_soon(env['sink_c'].run())
     
     # Complex pattern: A, B, A, A, B, B, A, B
-    # Create valid Ethernet packets (64 bytes each)
+    # Create valid AV_STREAM packets (64 bytes each)
     pattern = [
         ('A', create_packet(64, pattern='incrementing', start_value=0xA10000)),
         ('B', create_packet(64, pattern='incrementing', start_value=0xB10000)),
@@ -112,7 +116,7 @@ async def test_packet_interleaving_stress(dut):
             expected_order.append(('B', pkt))
         await wait_cycles(dut, 2)
     
-    await wait_cycles(dut, 200)
+    await wait_cycles(dut, WAIT_LONG_CYCLES)
     
     # Verify all packets received
     assert len(env['sink_c'].packets) == len(pattern)
@@ -138,7 +142,7 @@ async def test_long_continuous_stream(dut):
     packets = []
     
     for i in range(num_packets):
-        # Create valid Ethernet packet (64 bytes minimum)
+        # Create valid AV_STREAM packet (46 bytes minimum)
         pkt, empty = create_packet(64, pattern='incrementing', start_value=0x1000 + i*1000)
         packets.append(pkt)
         await env['src_a'].send_packet(pkt, empty_last=empty)
@@ -161,21 +165,21 @@ async def test_mixed_packet_sizes(dut):
     
     env['src_b'].set_idle()
     
-    # Packets of various valid Ethernet sizes
+    # Packets of various valid AV_STREAM sizes
     packets = [
-        create_packet(64),   # Minimum: 64 bytes
+        create_packet(46),   # Minimum: 46 bytes
         create_packet(128),  # 128 bytes
         create_packet(256),  # 256 bytes
         create_packet(512),  # 512 bytes
         create_packet(1024), # 1024 bytes
-        create_packet(1518), # Maximum: 1518 bytes
+        create_packet(1500), # Maximum: 1500 bytes
     ]
     
     for pkt, empty in packets:
         await env['src_a'].send_packet(pkt, empty_last=empty)
         await wait_cycles(dut, 2)
     
-    await wait_cycles(dut, 200)
+    await wait_cycles(dut, WAIT_LONG_CYCLES)
     
     assert len(env['sink_c'].packets) == len(packets)
     # packets contains tuples (words, empty), but sink_c.packets contains just the words
@@ -246,7 +250,7 @@ async def test_high_frequency_packets(dut):
     packets = []
     
     for i in range(num_packets):
-        # Create valid Ethernet packet (64 bytes minimum)
+        # Create valid AV_STREAM packet (46 bytes minimum)
         pkt, empty = create_packet(64)
         packets.append(pkt)
         await env['src_a'].send_packet(pkt, empty_last=empty)
@@ -260,50 +264,16 @@ async def test_high_frequency_packets(dut):
 @cocotb.test()
 async def test_alternating_ports_stress(dut):
     """Stress test with queued packets from both ports - proper arbitration and backpressure."""
-    from drivers.avalon_st_driver import AvalonSTQueuedSource
-    from monitors.avalon_st_monitor import AvalonSTSinkWithBackpressure
-    from utils.test_utils import reset_dut, setup_clock, wait_cycles, create_packet
-    import cocotb
-    from cocotb.triggers import RisingEdge
-    
     # Setup clock
     cocotb.start_soon(setup_clock(dut))
     await reset_dut(dut)
     
     # Create queued drivers for both ports
-    src_a = AvalonSTQueuedSource(
-        clk   = dut.clk,
-        data  = dut.porta_data,
-        valid = dut.porta_valid,
-        sop   = dut.porta_sop,
-        eop   = dut.porta_eop,
-        empty = dut.porta_empty,
-        error = dut.porta_error,
-        ready = dut.porta_ready,
-    )
-    
-    src_b = AvalonSTQueuedSource(
-        clk   = dut.clk,
-        data  = dut.portb_data,
-        valid = dut.portb_valid,
-        sop   = dut.portb_sop,
-        eop   = dut.portb_eop,
-        empty = dut.portb_empty,
-        error = dut.portb_error,
-        ready = dut.portb_ready,
-    )
+    src_a = create_queued_source_a(dut)
+    src_b = create_queued_source_b(dut)
     
     # Create sink with backpressure to stress the design
-    sink_c = AvalonSTSinkWithBackpressure(
-        clk   = dut.clk,
-        data  = dut.portc_data,
-        valid = dut.portc_valid,
-        sop   = dut.portc_sop,
-        eop   = dut.portc_eop,
-        empty = dut.portc_empty,
-        error = dut.portc_error,
-        ready = dut.portc_ready,
-    )
+    sink_c = create_sink_with_backpressure(dut)
     
     # Start monitor with occasional backpressure pattern
     # Ready for 3 cycles, not ready for 1 cycle - creates backpressure
@@ -316,13 +286,13 @@ async def test_alternating_ports_stress(dut):
     total_packets = num_packets_per_port * 2
     
     # Queue all packets from both ports rapidly (non-blocking)
-    # Use valid Ethernet packet sizes (64 bytes minimum)
+    # Use valid AV_STREAM packet sizes (46 bytes minimum)
     for i in range(num_packets_per_port):
-        # Port A packets (64 bytes = 8 words)
+        # Port A packets (64 bytes)
         pkt_a, empty_a = create_packet(64, pattern='incrementing', start_value=0xA00000 + i*1000)
         await src_a.queue_packet(pkt_a, empty_last=empty_a)
         
-        # Port B packets (64 bytes = 8 words)
+        # Port B packets (64 bytes)
         pkt_b, empty_b = create_packet(64, pattern='incrementing', start_value=0xB00000 + i*1000)
         await src_b.queue_packet(pkt_b, empty_last=empty_b)
     

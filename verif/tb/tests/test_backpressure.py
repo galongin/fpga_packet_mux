@@ -1,13 +1,12 @@
 """
 Backpressure and flow control tests
-All tests comply with Ethernet packet constraints (64-1518 bytes).
+All tests comply with AV_STREAM packet constraints (46-1500 bytes, without Ethernet header).
 """
 import cocotb
 from cocotb.triggers import RisingEdge
-from drivers.avalon_st_driver import AvalonSTSource
-from monitors.avalon_st_monitor import AvalonSTSink, AvalonSTSinkWithBackpressure
-from utils.test_utils import reset_dut, setup_clock, wait_cycles, create_packet
-from test_helpers.test_fixtures import create_test_environment
+from utils.test_utils import reset_dut, wait_cycles, create_packet, wait_for_packet
+from test_helpers.test_fixtures import create_test_environment, create_sink_with_backpressure
+from config import WAIT_SHORT_CYCLES, WAIT_MEDIUM_CYCLES
 
 
 @cocotb.test()
@@ -16,17 +15,7 @@ async def test_output_backpressure(dut):
     env = create_test_environment(dut)
     await reset_dut(dut)
     
-    sink_c = AvalonSTSinkWithBackpressure(
-        clk   = dut.clk,
-        data  = dut.portc_data,
-        valid = dut.portc_valid,
-        sop   = dut.portc_sop,
-        eop   = dut.portc_eop,
-        empty = dut.portc_empty,
-        error = dut.portc_error,
-        ready = dut.portc_ready,
-    )
-    
+    sink_c = create_sink_with_backpressure(dut)
     cocotb.start_soon(sink_c.run())
     
     env['src_b'].set_idle()
@@ -34,7 +23,7 @@ async def test_output_backpressure(dut):
     # Start with ready high
     sink_c.set_ready(True)
     
-    # Send a valid Ethernet packet (64 bytes = 8 words)
+    # Send a valid AV_STREAM packet (64 bytes)
     pkt_a, empty_a = create_packet(64)
     
     async def send_with_backpressure():
@@ -77,7 +66,7 @@ async def test_output_backpressure(dut):
     # Use the driver's send_packet which handles backpressure automatically
     await env['src_a'].send_packet(pkt_a)
     
-    await wait_cycles(dut, 60)
+    await wait_cycles(dut, WAIT_MEDIUM_CYCLES)
     
     assert len(sink_c.packets) == 1
     assert sink_c.packets[0] == pkt_a
@@ -89,17 +78,7 @@ async def test_ready_deassert_during_packet(dut):
     env = create_test_environment(dut)
     await reset_dut(dut)
     
-    sink_c = AvalonSTSinkWithBackpressure(
-        clk   = dut.clk,
-        data  = dut.portc_data,
-        valid = dut.portc_valid,
-        sop   = dut.portc_sop,
-        eop   = dut.portc_eop,
-        empty = dut.portc_empty,
-        error = dut.portc_error,
-        ready = dut.portc_ready,
-    )
-    
+    sink_c = create_sink_with_backpressure(dut)
     cocotb.start_soon(sink_c.run())
     
     env['src_b'].set_idle()
@@ -121,7 +100,7 @@ async def test_ready_deassert_during_packet(dut):
     pkt_a, empty_a = create_packet(64)
     await env['src_a'].send_packet(pkt_a, empty_last=empty_a)
     
-    await wait_cycles(dut, 60)
+    await wait_cycles(dut, WAIT_MEDIUM_CYCLES)
     
     assert len(sink_c.packets) == 1
     assert sink_c.packets[0] == pkt_a
@@ -130,21 +109,10 @@ async def test_ready_deassert_during_packet(dut):
 @cocotb.test()
 async def test_ready_pattern(dut):
     """Test with a specific ready pattern."""
-    from utils.test_utils import wait_for_packet
-    
     env = create_test_environment(dut)
     await reset_dut(dut)
     
-    sink_c = AvalonSTSinkWithBackpressure(
-        clk   = dut.clk,
-        data  = dut.portc_data,
-        valid = dut.portc_valid,
-        sop   = dut.portc_sop,
-        eop   = dut.portc_eop,
-        empty = dut.portc_empty,
-        error = dut.portc_error,
-        ready = dut.portc_ready,
-    )
+    sink_c = create_sink_with_backpressure(dut)
     
     # Pattern: ready for 2 cycles, not ready for 1 cycle, repeat
     ready_pattern = [(2, True), (1, False)]
@@ -170,17 +138,7 @@ async def test_backpressure_propagation_to_input(dut):
     env = create_test_environment(dut)
     await reset_dut(dut)
     
-    sink_c = AvalonSTSinkWithBackpressure(
-        clk   = dut.clk,
-        data  = dut.portc_data,
-        valid = dut.portc_valid,
-        sop   = dut.portc_sop,
-        eop   = dut.portc_eop,
-        empty = dut.portc_empty,
-        error = dut.portc_error,
-        ready = dut.portc_ready,
-    )
-    
+    sink_c = create_sink_with_backpressure(dut)
     cocotb.start_soon(sink_c.run())
     
     env['src_b'].set_idle()
@@ -195,7 +153,7 @@ async def test_backpressure_propagation_to_input(dut):
     
     # Release backpressure and wait for packet to complete
     sink_c.set_ready(True)
-    await wait_cycles(dut, 40)
+    await wait_cycles(dut, WAIT_SHORT_CYCLES)
     
     # Verify packet was received
     assert len(sink_c.packets) == 1
@@ -208,17 +166,7 @@ async def test_continuous_backpressure(dut):
     env = create_test_environment(dut)
     await reset_dut(dut)
     
-    sink_c = AvalonSTSinkWithBackpressure(
-        clk   = dut.clk,
-        data  = dut.portc_data,
-        valid = dut.portc_valid,
-        sop   = dut.portc_sop,
-        eop   = dut.portc_eop,
-        empty = dut.portc_empty,
-        error = dut.portc_error,
-        ready = dut.portc_ready,
-    )
-    
+    sink_c = create_sink_with_backpressure(dut)
     cocotb.start_soon(sink_c.run())
     
     env['src_b'].set_idle()
@@ -226,7 +174,7 @@ async def test_continuous_backpressure(dut):
     # Keep ready low for extended period
     sink_c.set_ready(False)
     
-    # Create valid Ethernet packet (64 bytes minimum)
+    # Create valid AV_STREAM packet (46 bytes minimum)
     pkt_a, empty_a = create_packet(64)
     
     # Start packet
@@ -257,7 +205,7 @@ async def test_continuous_backpressure(dut):
     env['src_a'].eop.value = 0
     env['src_a'].empty.value = 0
     
-    await wait_cycles(dut, 40)
+    await wait_cycles(dut, WAIT_SHORT_CYCLES)
     
     assert len(sink_c.packets) == 1
     assert sink_c.packets[0] == pkt_a

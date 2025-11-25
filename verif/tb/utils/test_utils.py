@@ -157,10 +157,13 @@ async def wait_for_packet(sink, timeout_cycles=None, min_packets=1):
 
 def create_packet(num_bytes=None, pattern='random', start_value=0x1000, seed=None):
     """
-    Create a valid Ethernet-sized packet (64-1518 bytes).
+    Create a valid AV_STREAM packet (46-1500 bytes).
+    
+    Note: AV_STREAM data is Ethernet payload WITHOUT header/preamble.
+    Full Ethernet frame (with header) is 64-1518 bytes, but AV_STREAM data is 46-1500 bytes.
     
     Args:
-        num_bytes: Number of bytes in packet (must be between 64 and 1518).
+        num_bytes: Number of bytes in packet (must be between 46 and 1500).
                    If None, a random size within the valid range will be selected.
         pattern: Pattern type ('incrementing', 'all_ones', 'all_zeros', 'alternating', 'random')
         start_value: Starting value for incrementing pattern
@@ -174,12 +177,8 @@ def create_packet(num_bytes=None, pattern='random', start_value=0x1000, seed=Non
     Raises:
         ValueError: If num_bytes is outside valid range
     """
-    try:
-        from config import MIN_PACKET_BYTES, MAX_PACKET_BYTES, BYTES_PER_WORD
-    except ImportError:
-        MIN_PACKET_BYTES = 46
-        MAX_PACKET_BYTES = 1500
-        BYTES_PER_WORD = 8
+    
+    from config import MIN_PACKET_BYTES, MAX_PACKET_BYTES, BYTES_PER_WORD    
     
     # Set random seed once at the beginning if provided (for reproducibility)
     if seed is not None:

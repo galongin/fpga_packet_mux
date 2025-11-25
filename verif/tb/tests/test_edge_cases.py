@@ -1,24 +1,18 @@
 """
 Edge case tests
-All tests comply with Ethernet packet constraints (64-1518 bytes).
+All tests comply with AV_STREAM packet constraints (46-1500 bytes, without Ethernet header).
 """
 import cocotb
 from cocotb.triggers import RisingEdge
-from drivers.avalon_st_driver import AvalonSTSource
-from monitors.avalon_st_monitor import AvalonSTSink
-from utils.test_utils import reset_dut, setup_clock, wait_cycles, create_packet
-from test_helpers.test_fixtures import create_test_environment
+from utils.test_utils import reset_dut, wait_cycles, create_packet
+from test_helpers.test_fixtures import setup_test_with_idle_port, assert_single_packet_received
+from config import WAIT_SHORT_CYCLES, WAIT_MEDIUM_CYCLES
 
 
 @cocotb.test()
 async def test_valid_without_sop(dut):
     """Valid asserted without SOP (should be ignored in IDLE)."""
-    env = create_test_environment(dut)
-    await reset_dut(dut)
-    
-    cocotb.start_soon(env['sink_c'].run())
-    
-    env['src_b'].set_idle()
+    env = await setup_test_with_idle_port(dut, 'b')
     
     # Send valid without SOP
     await RisingEdge(dut.clk)
@@ -39,22 +33,16 @@ async def test_valid_without_sop(dut):
     pkt_a, empty_a = create_packet(64)
     await env['src_a'].send_packet(pkt_a, empty_last=empty_a)
     
-    await wait_cycles(dut, 40)
+    await wait_cycles(dut, WAIT_SHORT_CYCLES)
     
     # Should have one valid packet
-    assert len(env['sink_c'].packets) == 1
-    assert env['sink_c'].packets[0] == pkt_a
+    assert_single_packet_received(env['sink_c'], pkt_a)
 
 
 @cocotb.test()
 async def test_eop_without_sop(dut):
     """EOP without preceding SOP."""
-    env = create_test_environment(dut)
-    await reset_dut(dut)
-    
-    cocotb.start_soon(env['sink_c'].run())
-    
-    env['src_b'].set_idle()
+    env = await setup_test_with_idle_port(dut, 'b')
     
     # Send EOP without SOP
     await RisingEdge(dut.clk)
@@ -72,11 +60,11 @@ async def test_eop_without_sop(dut):
     env['src_a'].valid.value = 0
     await wait_cycles(dut, 2)
     
-    # Minimum Ethernet packet: 64 bytes = 8 words
+    # Minimum AV_STREAM packet: 46 bytes
     pkt_a, empty_a = create_packet(64)
     await env['src_a'].send_packet(pkt_a, empty_last=empty_a)
     
-    await wait_cycles(dut, 40)
+    await wait_cycles(dut, WAIT_SHORT_CYCLES)
     
     assert len(env['sink_c'].packets) == 1
 
@@ -84,9 +72,11 @@ async def test_eop_without_sop(dut):
 @cocotb.test()
 async def test_simultaneous_eop_and_new_sop(dut):
     """EOP on one port, SOP on other in same cycle."""
+    from test_helpers.test_fixtures import create_test_environment
+    from utils.test_utils import reset_dut
+    
     env = create_test_environment(dut)
     await reset_dut(dut)
-    
     cocotb.start_soon(env['sink_c'].run())
     
     # Send packet A
@@ -98,7 +88,7 @@ async def test_simultaneous_eop_and_new_sop(dut):
     pkt_b, empty_b = create_packet(64)
     await env['src_b'].send_packet(pkt_b, empty_last=empty_b)
     
-    await wait_cycles(dut, 60)
+    await wait_cycles(dut, WAIT_MEDIUM_CYCLES)
     
     assert len(env['sink_c'].packets) == 2
     assert env['sink_c'].packets[0] == pkt_a
@@ -108,12 +98,7 @@ async def test_simultaneous_eop_and_new_sop(dut):
 @cocotb.test()
 async def test_reset_during_transmission(dut):
     """Reset asserted mid-packet."""
-    env = create_test_environment(dut)
-    await reset_dut(dut)
-    
-    cocotb.start_soon(env['sink_c'].run())
-    
-    env['src_b'].set_idle()
+    env = await setup_test_with_idle_port(dut, 'b')
     
     # Start sending packet (valid Ethernet packet)
     pkt_a, empty_a = create_packet(64)
@@ -144,7 +129,7 @@ async def test_reset_during_transmission(dut):
     pkt_new, empty_new = create_packet(64)
     await env['src_a'].send_packet(pkt_new, empty_last=empty_new)
     
-    await wait_cycles(dut, 40)
+    await wait_cycles(dut, WAIT_SHORT_CYCLES)
     
     # Should only have the new packet (reset should have cleared state)
     # Note: depending on design, might have 0 or 1 packets
@@ -157,12 +142,7 @@ async def test_reset_during_transmission(dut):
 @cocotb.test()
 async def test_state_transition_timing(dut):
     """Verify state changes at correct clock edges."""
-    env = create_test_environment(dut)
-    await reset_dut(dut)
-    
-    cocotb.start_soon(env['sink_c'].run())
-    
-    env['src_b'].set_idle()
+    env = await setup_test_with_idle_port(dut, 'b')
     
     # Send packet and monitor state transitions
     pkt_a, empty_a = create_packet(64)
@@ -173,7 +153,7 @@ async def test_state_transition_timing(dut):
     # Send packet
     await env['src_a'].send_packet(pkt_a, empty_last=empty_a)
     
-    await wait_cycles(dut, 40)
+    await wait_cycles(dut, WAIT_SHORT_CYCLES)
     
     assert len(env['sink_c'].packets) == 1
     # After packet completes, should return to IDLE
@@ -185,12 +165,7 @@ async def test_state_transition_timing(dut):
 @cocotb.test()
 async def test_metadata_preservation(dut):
     """All metadata (sop, eop, empty, error) preserved."""
-    env = create_test_environment(dut)
-    await reset_dut(dut)
-    
-    cocotb.start_soon(env['sink_c'].run())
-    
-    env['src_b'].set_idle()
+    env = await setup_test_with_idle_port(dut, 'b')
     
     # Test various metadata combinations
     test_cases = [
@@ -202,14 +177,14 @@ async def test_metadata_preservation(dut):
     
     for i, test_case in enumerate(test_cases):
         env['sink_c'].clear()
-        # Create valid Ethernet packet (64 + empty bytes)
+        # Create valid AV_STREAM packet (46 + empty bytes)
         pkt, _ = create_packet(64 + test_case['empty'])
         await env['src_a'].send_packet(
             pkt, 
             empty_last=test_case['empty'],
             error=test_case['error']
         )
-        await wait_cycles(dut, 40)
+        await wait_cycles(dut, WAIT_SHORT_CYCLES)
         
         assert len(env['sink_c'].packets) == 1
         metadata = env['sink_c'].get_last_packet_metadata()
@@ -221,12 +196,7 @@ async def test_metadata_preservation(dut):
 @cocotb.test()
 async def test_packet_abort(dut):
     """Valid goes low mid-packet (if design handles this)."""
-    env = create_test_environment(dut)
-    await reset_dut(dut)
-    
-    cocotb.start_soon(env['sink_c'].run())
-    
-    env['src_b'].set_idle()
+    env = await setup_test_with_idle_port(dut, 'b')
     
     # Start packet
     await RisingEdge(dut.clk)
@@ -250,7 +220,7 @@ async def test_packet_abort(dut):
     pkt, empty = create_packet(64)
     await env['src_a'].send_packet(pkt, empty_last=empty)
     
-    await wait_cycles(dut, 40)
+    await wait_cycles(dut, WAIT_SHORT_CYCLES)
     
     # Should have at least the complete packet
     # Aborted packet may or may not be in sink depending on design
@@ -260,14 +230,9 @@ async def test_packet_abort(dut):
 @cocotb.test()
 async def test_various_data_patterns(dut):
     """Test with various data patterns."""
-    env = create_test_environment(dut)
-    await reset_dut(dut)
+    env = await setup_test_with_idle_port(dut, 'b')
     
-    cocotb.start_soon(env['sink_c'].run())
-    
-    env['src_b'].set_idle()
-    
-    # Use valid Ethernet packet sizes (64 bytes minimum = 8 words)
+    # Use valid AV_STREAM packet sizes (46 bytes minimum)
     patterns = [
         create_packet(64, 'incrementing'),
         create_packet(64, 'all_ones'),
@@ -278,8 +243,7 @@ async def test_various_data_patterns(dut):
     for pkt, empty in patterns:
         env['sink_c'].clear()
         await env['src_a'].send_packet(pkt, empty_last=empty)
-        await wait_cycles(dut, 40)
+        await wait_cycles(dut, WAIT_SHORT_CYCLES)
         
-        assert len(env['sink_c'].packets) == 1
-        assert env['sink_c'].packets[0] == pkt
+        assert_single_packet_received(env['sink_c'], pkt)
 
